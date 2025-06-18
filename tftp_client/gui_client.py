@@ -1,4 +1,4 @@
-# gui_client.py - GUI for TFTP client with progress and diagnostics (single and XML multi-file mode)
+# gui_client.py - Enhanced GUI with box selection, ping check, progress bars, and summary
 
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -6,6 +6,7 @@ from tkinter import ttk
 import threading
 import xml.etree.ElementTree as ET
 import os
+import subprocess
 from tftp_client import TftpClient
 
 class TftpGuiApp:
@@ -14,17 +15,36 @@ class TftpGuiApp:
         self.root.title("TFTP Loader GUI")
         self.filepath = None
         self.is_xml_mode = False
+        self.box_ips = {
+            "FCC1": "127.0.0.1",
+            "FCC2": "192.168.1.102",
+            "FCC3": "192.168.1.103",
+            "FCC4": "192.168.1.104"
+        }
+        self.selected_boxes = {}
+        self.status_labels = {}
 
-        # Widgets
+        # File selection
         self.file_label = tk.Label(root, text="No file selected")
         self.file_label.pack(pady=5)
 
         self.select_button = tk.Button(root, text="Select File or XML", command=self.select_file)
         self.select_button.pack(pady=5)
 
-        self.ip_entry = tk.Entry(root)
-        self.ip_entry.insert(0, "127.0.0.1")
-        self.ip_entry.pack(pady=5)
+        # Box selection
+        self.box_frame = tk.LabelFrame(root, text="Select Target FCCs")
+        self.box_frame.pack(pady=5)
+        for box in self.box_ips:
+            var = tk.BooleanVar()
+            chk = tk.Checkbutton(self.box_frame, text=box, variable=var)
+            chk.pack(anchor='w')
+            self.selected_boxes[box] = var
+            status = tk.Label(self.box_frame, text="[Status]", fg="gray")
+            status.pack(anchor='e')
+            self.status_labels[box] = status
+
+        self.ping_button = tk.Button(root, text="Ping Selected Boxes", command=self.ping_boxes)
+        self.ping_button.pack(pady=5)
 
         self.upload_button = tk.Button(root, text="Upload", command=self.start_upload)
         self.upload_button.pack(pady=5)
@@ -32,7 +52,7 @@ class TftpGuiApp:
         self.progress = ttk.Progressbar(root, length=300)
         self.progress.pack(pady=5)
 
-        self.log_text = tk.Text(root, height=10, width=60)
+        self.log_text = tk.Text(root, height=12, width=70)
         self.log_text.pack(pady=5)
 
     def select_file(self):
@@ -51,32 +71,56 @@ class TftpGuiApp:
         self.progress['value'] = percent
         self.root.update_idletasks()
 
+    def ping_boxes(self):
+        for box, var in self.selected_boxes.items():
+            if var.get():
+                ip = self.box_ips[box]
+                reachable = self.ping_host(ip)
+                color = "green" if reachable else "red"
+                self.status_labels[box].config(text="Online" if reachable else "Offline", fg=color)
+
+    def ping_host(self, ip):
+        try:
+            result = subprocess.run(["ping", "-n", "1", ip], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return "TTL=" in result.stdout
+        except:
+            return False
+
     def start_upload(self):
         if not self.filepath:
             messagebox.showwarning("No File", "Please select a file to upload.")
             return
 
-        ip = self.ip_entry.get().strip()
-        if not ip:
-            messagebox.showwarning("No IP", "Please enter the TFTP server IP address.")
+        active_boxes = [box for box, var in self.selected_boxes.items() if var.get() and self.status_labels[box].cget("fg") == "green"]
+        if not active_boxes:
+            messagebox.showwarning("No Target", "No reachable target boxes selected.")
             return
 
-        thread = threading.Thread(target=self.upload_thread, args=(ip,))
+        thread = threading.Thread(target=self.upload_thread, args=(active_boxes,))
         thread.start()
 
-    def upload_thread(self, ip):
+    def upload_thread(self, targets):
         self.progress['value'] = 0
-        self.log("Starting upload...")
+        self.log("Starting upload to: " + ", ".join(targets))
 
-        if self.is_xml_mode:
-            self.upload_from_xml(self.filepath, ip)
-        else:
-            client = TftpClient(ip, log_callback=self.log, progress_callback=self.update_progress)
-            success = client.upload_file(self.filepath)
-            if success:
-                self.log("✅ Upload complete.")
+        result_summary = {}
+
+        for box in targets:
+            self.log(f"\n--- Uploading to {box} ---")
+            ip = self.box_ips[box]
+            success = False
+            if self.is_xml_mode:
+                success = self.upload_from_xml(self.filepath, ip)
             else:
-                self.log("❌ Upload failed.")
+                client = TftpClient(ip, log_callback=self.log, progress_callback=self.update_progress)
+                success = client.upload_file(self.filepath)
+
+            result_summary[box] = "PASS" if success else "FAIL"
+
+        # Final summary
+        self.log("\n=== Upload Summary ===")
+        for box, status in result_summary.items():
+            self.log(f"{box}: {status}")
 
     def upload_from_xml(self, xml_path, server_ip):
         try:
@@ -109,18 +153,22 @@ class TftpGuiApp:
 
                 if not os.path.exists(comp['file_path']):
                     self.log(f"❌ File not found: {comp['file_path']}")
-                    continue
+                    return False
 
                 client = TftpClient(server_ip, log_callback=self.log, progress_callback=self.update_progress)
                 success = client.upload_file(comp['file_path'])
 
-                if success:
-                    self.log(f"✅ Upload of '{comp['id']}' complete.")
-                else:
+                if not success:
                     self.log(f"❌ Upload of '{comp['id']}' failed.")
+                    return False
+
+                self.log(f"✅ Upload of '{comp['id']}' complete.")
+
+            return True
 
         except Exception as e:
             self.log(f"⚠️ XML Upload error: {e}")
+            return False
 
 if __name__ == "__main__":
     root = tk.Tk()
