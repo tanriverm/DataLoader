@@ -39,7 +39,7 @@ void handle_tftp(void) {
         uint16_t opcode = (packet[0] << 8) | packet[1];
         uint16_t block = (packet[2] << 8) | packet[3];
 
-        if (opcode == OPCODE_WRQ && current_state == STATE_IDLE) {  // WRQ
+        if (opcode == OPCODE_WRQ && (current_state == STATE_IDLE || current_state == STATE_COMPLETED)) {  // WRQ
             const char* filename = (const char*)&packet[2];
             printf("WRQ for file: %s\n", filename);
             output_file = fopen("received.sre", "wb");

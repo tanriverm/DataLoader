@@ -1,0 +1,11 @@
+<LoadControl>
+    <Target logicalDevice="FCC1" manufacturer="OEM1" hardwareRevision="1.0" />
+
+    <SoftwareComponent id="FCC1_BOOT" version="v1.0" format="binary" targetMemory="0x08000000">
+        <File name="fcc1_boot.sre" length="8192" crc32="A1B2C3D4" />
+    </SoftwareComponent>
+
+    <SoftwareComponent id="FCC1_APP" version="v2.1.4" format="binary" targetMemory="0x08008000">
+        <File name="fcc1_app.sre" length="24576" crc32="F0E1D2C3" />
+    </SoftwareComponent>
+</LoadControl>

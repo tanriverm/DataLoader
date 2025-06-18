@@ -1,93 +1,109 @@
+# tftp_client.py - Standalone reusable TFTP client with CRC32 and callback support
+
 import socket
-import struct
 import zlib
-import os
 
 class TftpClient:
-    OPCODE_WRQ = 2
-    OPCODE_DATA = 3
-    OPCODE_ACK = 4
-    BLOCK_SIZE = 512
-    MAX_RETRIES = 5
-    TIMEOUT = 3.0
-
-    def __init__(self, server_ip, server_port=69):
+    def __init__(self, server_ip, server_port=69, timeout=2, retries=5,
+                 log_callback=None, progress_callback=None):
         self.server_ip = server_ip
         self.server_port = server_port
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.settimeout(self.TIMEOUT)
-        self.server_addr = (server_ip, server_port)
+        self.timeout = timeout
+        self.retries = retries
+        self.log_callback = log_callback or (lambda msg: None)
+        self.progress_callback = progress_callback or (lambda current, total: None)
 
-    def send_wrq(self, filename, mode="octet"):
-        payload = filename.encode() + b'\x00' + mode.encode() + b'\x00'
-        packet = struct.pack("!H", self.OPCODE_WRQ) + payload
-        self.sock.sendto(packet, self.server_addr)
+    def log(self, msg):
+        self.log_callback(msg)
 
-    def send_data(self, block_num, data):
-        packet = struct.pack("!HH", self.OPCODE_DATA, block_num) + data
-        self.sock.sendto(packet, self.server_addr)
-        print(f"Sent DATA block {block_num} (attempt 1)")
+    def send_wrq(self, sock, filename, mode="octet", options=None):
+        options = options or {}
+        rrq_packet = b"\x00\x02" + filename.encode() + b"\x00" + mode.encode() + b"\x00"
+        for k, v in options.items():
+            rrq_packet += k.encode() + b"\x00" + str(v).encode() + b"\x00"
+        sock.sendto(rrq_packet, (self.server_ip, self.server_port))
+        self.log(f"Sent WRQ for file '{filename}'")
 
-    def wait_for_ack(self, expected_block):
-        while True:
-            response, addr = self.sock.recvfrom(1024)
-            opcode, block = struct.unpack("!HH", response[:4])
-            if opcode == self.OPCODE_ACK and block == expected_block:
-                print(f"Received ACK for block {block}")
-                return True
+    def send_data_block(self, sock, block_num, data, addr):
+        header = b"\x00\x03" + block_num.to_bytes(2, 'big')
+        sock.sendto(header + data, addr)
+        self.log(f"Sent DATA block {block_num} ({len(data)} bytes)")
 
-    def send_file(self, filename):
-        block_num = 1
-        last_block_size = self.BLOCK_SIZE
-        crc32 = 0
+    def receive_ack(self, sock, expected_block):
+        try:
+            data, _ = sock.recvfrom(516)
+            if len(data) >= 4:
+                opcode = int.from_bytes(data[0:2], 'big')
+                block = int.from_bytes(data[2:4], 'big')
+                if opcode == 4 and block == expected_block:
+                    self.log(f"Received ACK for block {block}")
+                    return True
+            self.log("Unexpected or invalid ACK received")
+            return False
+        except socket.timeout:
+            self.log(f"Timeout waiting for ACK {expected_block}")
+            return False
 
-        self.send_wrq(os.path.basename(filename))
-        self.wait_for_ack(0)
+    def upload_file(self, filepath):
+        try:
+            filesize = 0
+            with open(filepath, "rb") as f:
+                f.seek(0, 2)
+                filesize = f.tell()
 
-        with open(filename, "rb") as f:
-            while True:
-                data = f.read(self.BLOCK_SIZE)
-                if not data:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(self.timeout)
+
+            filename = filepath.split('/')[-1]
+
+            # Send WRQ
+            self.send_wrq(sock, filename)
+            # Wait for ACK block 0
+            for _ in range(self.retries):
+                if self.receive_ack(sock, 0):
                     break
-
-                crc32 = zlib.crc32(data, crc32)
-
-                retries = 0
-                while retries < self.MAX_RETRIES:
-                    self.send_data(block_num, data)
-                    try:
-                        if self.wait_for_ack(block_num):
-                            break
-                    except socket.timeout:
-                        retries += 1
-                        print(f"Retry block {block_num}")
                 else:
-                    raise Exception(f"Failed to send block {block_num} after {self.MAX_RETRIES} attempts.")
-
-                last_block_size = len(data)
-                block_num += 1
-
-        if last_block_size == self.BLOCK_SIZE:
-            retries = 0
-            while retries < self.MAX_RETRIES:
-                self.send_data(block_num, b"")
-                try:
-                    if self.wait_for_ack(block_num):
-                        print("✅ Final empty block acknowledged")
-                        break
-                except socket.timeout:
-                    retries += 1
-                    print(f"Retry final empty block {block_num}")
+                    self.send_wrq(sock, filename)
             else:
-                raise Exception("Failed to send final empty block")
+                self.log("Failed to receive ACK for WRQ, aborting.")
+                sock.close()
+                return False
 
-        print("✅ File transfer complete.")
-        # ✅ Send CRC32 in custom block (opcode 0x10)
-        crc_opcode = 0x10
-        crc_packet = struct.pack("!H", crc_opcode) + struct.pack(">I", crc32)
-        self.sock.sendto(crc_packet, self.server_addr)
-        print(f"✅ CRC32 sent to server in custom block: 0x{crc32:08X}")
+            with open(filepath, "rb") as f:
+                block_num = 1
+                total_blocks = (filesize + 511) // 512
+                crc = 0
+                while True:
+                    data = f.read(512)
+                    if not data:
+                        break
+                    crc = zlib.crc32(data, crc)
 
-if __name__ == "__main__":
-    client = TftpClient("127.0.0.1", 69)
-    client.send_file("test_input.sre")
+                    for attempt in range(1, self.retries + 1):
+                        self.send_data_block(sock, block_num, data, (self.server_ip, self.server_port))
+                        if self.receive_ack(sock, block_num):
+                            break
+                        else:
+                            self.log(f"Retry block {block_num} (attempt {attempt})")
+                    else:
+                        self.log(f"Failed to send block {block_num} after {self.retries} attempts.")
+                        sock.close()
+                        return False
+
+                    self.progress_callback(block_num, total_blocks)
+                    block_num += 1
+
+            # Send CRC32 packet with custom opcode 0x10
+            crc_packet = bytearray()
+            crc_packet += b'\x00' + b'\x10'
+            crc_packet += crc.to_bytes(4, 'big')
+            sock.sendto(crc_packet, (self.server_ip, self.server_port))
+            self.log(f"Sent CRC32: 0x{crc:08X}")
+
+            sock.close()
+            self.log("✅ File transfer complete.")
+            return True
+
+        except Exception as e:
+            self.log(f"Exception: {e}")
+            return False
