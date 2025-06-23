@@ -1,0 +1,15 @@
+| File Name                 | Purpose                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `gui_client.py`           | 🧠 **Main GUI entry point** — contains the Tkinter-based interface                             |
+| `tftp_client.py`          | 📤 File transfer logic via TFTP (remains untouched)                                            |
+| `arinc615_loader.py`      | ⚙️ Coordinates load logic from XML or manual selection (this is our main loader engine)        |
+| `control_client.py`       | 📡 Control protocol interface for ARINC 615A (KEEP, but integrate inside `arinc615_loader.py`) |
+| ❌ `arinc615a_protocol.py` | Redundant now — its logic will be absorbed into `control_client.py` or discarded               |
+
+
+| File                                                     | Purpose                                                                                       |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `tftp_client.py`                                         | Handles low-level TFTP file transfer (send WRQ/DATA/CRC, receive ACK).                        |
+| `gui_client.py`                                          | GUI application with FCC selection, ping check, progress bars, log, and file/XML selection.   |
+| `arinc615_loader.py`                                     | Scriptable CLI tool to process XML load plan and coordinate TFTP + control commands over TCP. |
+| `control_client.py` *(merged into `arinc615_loader.py`)* | Originally a separate TCP control interface, now merged.                                      |

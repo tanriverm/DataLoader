@@ -1,0 +1,7 @@
+<LoadPlan>
+    <Target logicalDevice="FCC1" manufacturer="OEM1" hardwareRevision="1.0" />
+
+    <SoftwareComponent id="FCC1_TEST" version="v1.0" format="binary" targetMemory="0x08000000">
+        <File name="test_input.sre" length="8192" crc32="A1B2C3D4" />
+    </SoftwareComponent>
+</LoadPlan>
