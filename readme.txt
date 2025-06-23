@@ -217,3 +217,89 @@ GUI displays results and success/failure summary
 8. ← OK
 9. → COMMIT_LOAD
 10. ← OK
+
+
+What We Have Implemented So Far
+🧾 1. Control Protocol Layer on Top of TFTP
+✅ We defined a custom control protocol over TCP with structured JSON messages (INIT_LOAD, SEND_LSE, VERIFY_LSE, etc.)
+
+✅ A working TCP control server on the target side is listening on port 61500.
+
+✅ The client (Python GUI via Arinc615Loader) opens TCP connections and sends these commands in the correct order.
+
+✅ The target responds with JSON messages indicating success or failure.
+
+✅ Control and TFTP layers are decoupled, as per 615A guidance.
+
+2. XML Load Plans and Manifest Handling
+✅ You’re using an XML-based LoadPlan which includes:
+
+Logical device info (<Target>)
+
+LSE definition (<SoftwareComponent>)
+
+File metadata (<File name=... crc32=... length=...>)
+
+✅ The client parses this XML and feeds it to the loader logic correctly.
+
+✅ The client supports multi-component load plans (looping over XML-defined software components).
+
+3. Loadable Part (LDP) and Loadable Software Element (LSE) Support
+✅ We use the terminology correctly:
+
+Each <SoftwareComponent> is treated as an LSE.
+
+A full <LoadPlan> is considered the LDP.
+
+✅ We upload individual LSEs to specific target memory.
+
+✅ We compute and verify CRCs on both ends.
+
+What’s Partially Implemented or Optional
+📤 4. Loader Status Reporting (Load Reports)
+🟡 Basic status is reported as JSON responses ({"status": "OK"} etc.) over the TCP control channel.
+
+🔲 Not yet implemented:
+
+Persistent or logged Load Report generation (e.g., .log or .json summary).
+
+Returning detailed diagnostics or error causes.
+
+Structured end-of-load summary (date, session ID, loaded files, results).
+
+✅ Next step: Add a small log file writer or JSON report collector on the target side.
+
+ 5. Authentication (If Needed)
+⬜ Completely optional depending on your security needs.
+
+🔲 No current support for:
+
+Challenge-response handshakes
+
+Credentials in control packets
+
+Hash-based or certificate-based authentication
+
+✅ Next step (if needed): Add a simple shared-key check in INIT_LOAD or wrap TCP in TLS.
+
+
+Summary Table
+| Feature                     | Status     | Notes                                                         |
+| --------------------------- | ---------- | ------------------------------------------------------------- |
+| Control protocol (TCP JSON) | ✅ Done     | `INIT_LOAD`, `SEND_LSE`, `VERIFY_LSE`, `COMMIT_LOAD`, `ABORT` |
+| TFTP file transfer          | ✅ Done     | CRC32 verified, WRQ + DATA + custom CRC opcode (0x10)         |
+| XML load plan parsing       | ✅ Done     | `<LoadPlan>` with `SoftwareComponent` and `File`              |
+| LSE support                 | ✅ Done     | Each file = 1 LSE, memory + metadata supported                |
+| Load report/status          | 🟡 Partial | JSON responses OK; no persistent report/log file yet          |
+| Authentication              | ⬜ Not done | Optional; not needed unless required by system spec           |
+
+What You Can Do Next (Roadmap)
+
+| Task                               | Effort | Value  |
+| ---------------------------------- | ------ | ------ |
+| ✅ Add per-session log/report file  | Medium | High   |
+| ✅ Support XML signature/checksum   | Low    | Medium |
+| ✅ Add command to query session log | Low    | Medium |
+| 🔐 Add optional shared-key auth    | Low    | Medium |
+| 🧪 Add self-test/status command    | Low    | Medium |
+| 📦 Add support for zipped LDP      | Medium | Low    |
